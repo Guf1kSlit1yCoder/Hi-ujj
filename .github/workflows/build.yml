@@ -117,21 +117,12 @@ jobs:
                           curr += 1
 
                       if depth == 0 and curr >= idx:
-                          # Inject AltroBox Certificate Cloud banner in place of the removed section
-                          altro_banner = """NBSection {
+                          # Inject AltroBox Certificate Cloud banner with proper NBSection header
+                          altro_banner = """NBSection("Облачная база сертификатов AltroBOX") {
                               VStack(alignment: .leading, spacing: 8) {
-                                  HStack {
-                                      Image(systemName: "checkmark.seal.fill")
-                                          .foregroundStyle(.blue)
-                                          .font(.title2)
-                                      VStack(alignment: .leading, spacing: 2) {
-                                          Text("Облачная база сертификатов AltroBOX")
-                                              .font(.headline)
-                                          Text("Рабочие ключи и сертификаты для быстрой подписи")
-                                              .font(.caption)
-                                              .foregroundStyle(.secondary)
-                                      }
-                                  }
+                                  Text("Рабочие ключи и сертификаты для быстрой подписи")
+                                      .font(.caption)
+                                      .foregroundStyle(.secondary)
                                   Link(destination: URL(string: "https://github.com/Guf1kSlit1yCoder/Hi-ujj/blob/main/certificates.json")!) {
                                       HStack {
                                           Spacer()
@@ -148,7 +139,7 @@ jobs:
                               }
                               .padding(.vertical, 4)
                           }"""
-                          if "checkmark.seal.fill" not in code:
+                          if "arrow.down.circle.fill" not in code:
                               code = code[:target_idx] + altro_banner + code[curr:]
                           else:
                               code = code[:target_idx] + "EmptyView()" + code[curr:]
