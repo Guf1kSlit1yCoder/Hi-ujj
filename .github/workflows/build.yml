@@ -70,7 +70,7 @@ jobs:
         run: |
           cd upstream_ksign
           echo "Applying AltroBox watermark to all sections, stripping donations, and patching Swift..."
-          python3 -c "
+          cat << 'EOF' > patch.py
           import os, re
 
           for root, _, files in os.walk('.'):
@@ -93,12 +93,14 @@ jobs:
                           txt = re.sub(r'https?://[^\s\"\'\)]*github\.com/sponsors[^\s\"\'\)]*', '', txt)
                           txt = re.sub(r'buymeacoffee\.com/[a-zA-Z0-9_]+', '', txt)
                           txt = txt.replace('Sponsor @Nyasami', 'AltroBox Official')
-                          txt = txt.replace('\"Ksign\"', '\"AltroBox\"')
+                          txt = txt.replace('"Ksign"', '"AltroBox"')
 
                           # 4. Inject small 'AltroBox' badge in every screen via NBNavigationView.swift
-                          if f == 'NBNavigationView.swift' and '.navigationTitle(' in txt:
-                              badge_code = '.navigationTitle(\\1)\\n\\t\\t\\t.safeAreaInset(edge: .top, spacing: 0) { HStack { Text(\"AltroBox\").font(.system(size: 11, weight: .semibold, design: .rounded)).foregroundStyle(.secondary.opacity(0.75)).padding(.leading, 18).padding(.top, 2); Spacer() }.allowsHitTesting(false) }'
-                              txt = re.sub(r'\.navigationTitle\(([^)]+)\)', badge_code, txt, count=1)
+                          if f == 'NBNavigationView.swift':
+                              txt = txt.replace(
+                                  '.navigationTitle(',
+                                  '.safeAreaInset(edge: .top, spacing: 0) { HStack { Text("AltroBox").font(.system(size: 11, weight: .semibold, design: .rounded)).foregroundStyle(.secondary.opacity(0.8)).padding(.leading, 18).padding(.top, 2); Spacer() }.allowsHitTesting(false) }\n                                .navigationTitle('
+                              )
 
                           if orig != txt:
                               with open(path, 'w', encoding='utf-8') as fp:
@@ -106,7 +108,9 @@ jobs:
                               print(f'Patched: {path}')
                       except Exception as e:
                           pass
-          "
+          EOF
+          python3 patch.py
+          rm -f patch.py
           find . -name "Package.swift" -exec sed -i '' 's/swift-tools-version: 6.0/swift-tools-version: 5.9/g' {} +
 
       - name: Apply Custom App Name, Version & Bundle ID
