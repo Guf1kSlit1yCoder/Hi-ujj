@@ -50,14 +50,35 @@ jobs:
 
       - name: Select Latest Stable Xcode
         run: |
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          if ls -d /Applications/Xcode_26*.app 1> /dev/null 2>&1; then
+            LATEST_XCODE=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -n 1)
+            echo "Selecting latest Xcode: $LATEST_XCODE"
+            sudo xcode-select -s "$LATEST_XCODE/Contents/Developer"
+          else
+            echo "Selecting default Xcode.app"
+            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          fi
           xcodebuild -version
 
       - name: Patch Swift 6 Concurrency & Dependencies in Ksign
         run: |
           cd upstream_ksign
-          echo "Patching Swift 6 Sendable incompatibility in NimbleKit..."
-          find . -name "NBFetchService.swift" -exec sed -i '' 's/case parsingError(Any)/case parsingError(any Sendable)/g' {} +
+          echo "Patching Swift 6 Sendable and iOS SDK incompatibilities..."
+          python3 -c "
+          import os, re
+          for root, _, files in os.walk('.'):
+              for f in files:
+                  if f.endswith('.swift'):
+                      path = os.path.join(root, f)
+                      with open(path, 'r', encoding='utf-8', errors='ignore') as fp:
+                          txt = fp.read()
+                      new_txt = re.sub(r'\.glassEffect\(.*', '', txt)
+                      new_txt = new_txt.replace('case parsingError(Any)', 'case parsingError(any Sendable)')
+                      if new_txt != txt:
+                          with open(path, 'w', encoding='utf-8') as fp:
+                              fp.write(new_txt)
+                          print(f'Patched {path}')
+          "
           find . -name "Package.swift" -exec sed -i '' 's/swift-tools-version: 6.0/swift-tools-version: 5.9/g' {} +
 
       - name: Apply Custom App Name, Version & Bundle ID
