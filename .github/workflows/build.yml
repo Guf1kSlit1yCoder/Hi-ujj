@@ -130,7 +130,6 @@ jobs:
           zip -r9 "$GITHUB_WORKSPACE/output/ESign-unsigned.ipa" Payload
 
       - name: Optional Cloud Signing with Certificate Secrets (Zsign)
-        if: ${{ secrets.P12_BASE64 != '' && secrets.PROVISION_BASE64 != '' }}
         env:
           P12_BASE64: ${{ secrets.P12_BASE64 }}
           P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
@@ -138,6 +137,10 @@ jobs:
           CUSTOM_NAME: ${{ inputs.app_name || 'ESign' }}
           CUSTOM_BUNDLE_ID: ${{ inputs.bundle_id || 'p3.xyz.yyyue.esign' }}
         run: |
+          if [ -z "$P12_BASE64" ] || [ -z "$PROVISION_BASE64" ]; then
+            echo "Secrets P12_BASE64 or PROVISION_BASE64 are not configured. Skipping cloud signing."
+            exit 0
+          fi
           echo "Signing IPA using provided P12 and MobileProvision secrets..."
           brew install openssl pkg-config
           git clone https://github.com/zhlynn/zsign.git /tmp/zsign
