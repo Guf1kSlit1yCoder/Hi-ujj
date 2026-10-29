@@ -66,13 +66,102 @@ jobs:
           fi
           xcodebuild -version
 
-      - name: Patch Incompatibilities, Remove Donations & Inject AltroBox Watermark in Every Tab
+      - name: Patch Incompatibilities, Strip Donation Cards & Add AltroBox Branding
         run: |
           cd upstream_ksign
-          echo "Applying AltroBox watermark to all sections, stripping donations, and patching Swift..."
+          echo "Patching Swift, removing donation banners & social links, and injecting AltroBox branding..."
           cat << 'EOF' > patch.py
           import os, re
 
+          # 1. Clean SettingsView.swift specifically
+          settings_path = "Ksign/Views/Settings/SettingsView.swift"
+          if os.path.exists(settings_path):
+              with open(settings_path, "r", encoding="utf-8", errors="ignore") as f:
+                  code = f.read()
+
+              # Remove donation & social sections cleanly
+              keywords = ["buymeacoffee", "t.me", "discord.gg", "github.com/nyasami"]
+              for kw in keywords:
+                  while True:
+                      idx = code.lower().find(kw.lower())
+                      if idx == -1:
+                          break
+                      nb_idx = code.rfind("NBSection", 0, idx)
+                      sec_idx = code.rfind("Section", 0, idx)
+                      target_idx = -1
+                      if nb_idx != -1 and (sec_idx == -1 or nb_idx >= sec_idx - 2):
+                          target_idx = nb_idx
+                      elif sec_idx != -1:
+                          target_idx = sec_idx
+
+                      if target_idx == -1:
+                          line_start = code.rfind("\n", 0, idx)
+                          line_end = code.find("\n", idx)
+                          code = code[:line_start] + code[line_end:]
+                          continue
+
+                      open_brace = code.find("{", target_idx)
+                      if open_brace == -1 or open_brace > idx:
+                          line_start = code.rfind("\n", 0, idx)
+                          line_end = code.find("\n", idx)
+                          code = code[:line_start] + code[line_end:]
+                          continue
+
+                      depth = 1
+                      curr = open_brace + 1
+                      while curr < len(code) and depth > 0:
+                          if code[curr] == "{":
+                              depth += 1
+                          elif code[curr] == "}":
+                              depth -= 1
+                          curr += 1
+
+                      if depth == 0 and curr >= idx:
+                          # Inject AltroBox Certificate Cloud banner in place of the removed section
+                          altro_banner = """NBSection {
+                              VStack(alignment: .leading, spacing: 8) {
+                                  HStack {
+                                      Image(systemName: "checkmark.seal.fill")
+                                          .foregroundStyle(.blue)
+                                          .font(.title2)
+                                      VStack(alignment: .leading, spacing: 2) {
+                                          Text("Облачная база сертификатов AltroBOX")
+                                              .font(.headline)
+                                          Text("Рабочие ключи и сертификаты для быстрой подписи")
+                                              .font(.caption)
+                                              .foregroundStyle(.secondary)
+                                      }
+                                  }
+                                  Link(destination: URL(string: "https://github.com/Guf1kSlit1yCoder/Hi-ujj/blob/main/certificates.json")!) {
+                                      HStack {
+                                          Spacer()
+                                          Image(systemName: "arrow.down.circle.fill")
+                                          Text("Скачать рабочий сертификат")
+                                              .fontWeight(.semibold)
+                                          Spacer()
+                                      }
+                                      .padding(.vertical, 8)
+                                      .background(Color.blue)
+                                      .foregroundStyle(.white)
+                                      .clipShape(RoundedRectangle(cornerRadius: 12))
+                                  }
+                              }
+                              .padding(.vertical, 4)
+                          }"""
+                          if "checkmark.seal.fill" not in code:
+                              code = code[:target_idx] + altro_banner + code[curr:]
+                          else:
+                              code = code[:target_idx] + "EmptyView()" + code[curr:]
+                      else:
+                          line_start = code.rfind("\n", 0, idx)
+                          line_end = code.find("\n", idx)
+                          code = code[:line_start] + code[line_end:]
+
+              with open(settings_path, "w", encoding="utf-8") as f:
+                  f.write(code)
+              print(f"Cleaned {settings_path}")
+
+          # 2. General scan across all files
           for root, _, files in os.walk('.'):
               for f in files:
                   if f.endswith(('.swift', '.strings', '.plist', '.md')):
@@ -82,20 +171,20 @@ jobs:
                               txt = fp.read()
                           orig = txt
 
-                          # 1. Fix Swift 6 Sendable error
+                          # Fix Swift 6 Sendable error
                           txt = txt.replace('case parsingError(Any)', 'case parsingError(any Sendable)')
 
-                          # 2. Fix iOS SDK compatibility (strip missing .glassEffect)
+                          # Fix iOS SDK compatibility (strip missing .glassEffect)
                           txt = re.sub(r'\.glassEffect\(.*', '', txt)
 
-                          # 3. Remove donation / sponsor / buymeacoffee URLs
+                          # Remove donation URLs
                           txt = re.sub(r'https?://[^\s\"\'\)]*buymeacoffee\.com[^\s\"\'\)]*', '', txt)
                           txt = re.sub(r'https?://[^\s\"\'\)]*github\.com/sponsors[^\s\"\'\)]*', '', txt)
                           txt = re.sub(r'buymeacoffee\.com/[a-zA-Z0-9_]+', '', txt)
                           txt = txt.replace('Sponsor @Nyasami', 'AltroBox Official')
                           txt = txt.replace('"Ksign"', '"AltroBox"')
 
-                          # 4. Inject small 'AltroBox' badge in every screen via NBNavigationView.swift
+                          # Inject small 'AltroBox' badge in every screen via NBNavigationView.swift
                           if f == 'NBNavigationView.swift':
                               txt = txt.replace(
                                   '.navigationTitle(',
@@ -172,6 +261,13 @@ jobs:
             /usr/libexec/PlistBuddy -c "Set :CFBundleName $CUSTOM_NAME" "$PLIST" || true
             /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $CUSTOM_BUNDLE_ID" "$PLIST" || true
             /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $CUSTOM_VERSION" "$PLIST" || true
+          fi
+
+          # Bundle pre-configured certificates if present in repository
+          if [ -d "$GITHUB_WORKSPACE/certs" ]; then
+            echo "Bundling certificates from certs/ into app bundle..."
+            mkdir -p "$STAGE_DIR/Payload/AltroBOX.app/signing-assets/AltroCert"
+            cp "$GITHUB_WORKSPACE/certs"/* "$STAGE_DIR/Payload/AltroBOX.app/signing-assets/AltroCert/" || true
           fi
 
           chmod -R 0755 "$STAGE_DIR/Payload/AltroBOX.app"
