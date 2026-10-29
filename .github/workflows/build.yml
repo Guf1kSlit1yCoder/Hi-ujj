@@ -1,4 +1,4 @@
-name: Cloud Build ESign (Ksign Full Replica IPA)
+name: Cloud Build AltroBOX (iOS IPA)
 
 on:
   workflow_dispatch:
@@ -6,17 +6,17 @@ on:
       app_name:
         description: "Отображаемое имя приложения (CFBundleDisplayName)"
         required: false
-        default: "ESign"
+        default: "AltroBOX"
         type: string
       bundle_id:
-        description: "Bundle Identifier (например p3.xyz.yyyue.esign)"
+        description: "Bundle Identifier (например com.altrobox.app)"
         required: false
-        default: "p3.xyz.yyyue.esign"
+        default: "com.altrobox.app"
         type: string
       app_version:
         description: "Версия приложения (CFBundleShortVersionString)"
         required: false
-        default: "5.0.2"
+        default: "1.0.0"
         type: string
       create_release:
         description: "Опубликовать готовый IPA в GitHub Releases"
@@ -32,16 +32,22 @@ permissions:
 
 jobs:
   build-ipa:
-    name: Build Unsigned & Signed IPA on macOS
+    name: Build AltroBOX IPA on macOS
     runs-on: macos-15
     steps:
       - name: Checkout Current Repository
         uses: actions/checkout@v4
 
-      - name: Clone Upstream Open-Source ESign Replica (Nyasami/Ksign) with Submodules
+      - name: Unpack uploaded zip if present
+        run: |
+          if [ -f "ESign_Cloud_Build_Source.zip" ]; then
+            unzip -o ESign_Cloud_Build_Source.zip
+          fi
+
+      - name: Clone Upstream Engine with Submodules
         run: |
           if [ ! -d "Ksign.xcodeproj" ]; then
-            echo "Cloning Nyasami/Ksign with Zsign and IDeviceKit submodules..."
+            echo "Cloning source engine..."
             git clone --recurse-submodules https://github.com/Nyasami/Ksign.git upstream_ksign
           else
             git submodule update --init --recursive
@@ -60,32 +66,54 @@ jobs:
           fi
           xcodebuild -version
 
-      - name: Patch Swift 6 Concurrency & Dependencies in Ksign
+      - name: Patch Incompatibilities, Remove Donations & Inject AltroBox Watermark in Every Tab
         run: |
           cd upstream_ksign
-          echo "Patching Swift 6 Sendable and iOS SDK incompatibilities..."
+          echo "Applying AltroBox watermark to all sections, stripping donations, and patching Swift..."
           python3 -c "
           import os, re
+
           for root, _, files in os.walk('.'):
               for f in files:
-                  if f.endswith('.swift'):
+                  if f.endswith(('.swift', '.strings', '.plist', '.md')):
                       path = os.path.join(root, f)
-                      with open(path, 'r', encoding='utf-8', errors='ignore') as fp:
-                          txt = fp.read()
-                      new_txt = re.sub(r'\.glassEffect\(.*', '', txt)
-                      new_txt = new_txt.replace('case parsingError(Any)', 'case parsingError(any Sendable)')
-                      if new_txt != txt:
-                          with open(path, 'w', encoding='utf-8') as fp:
-                              fp.write(new_txt)
-                          print(f'Patched {path}')
+                      try:
+                          with open(path, 'r', encoding='utf-8', errors='ignore') as fp:
+                              txt = fp.read()
+                          orig = txt
+
+                          # 1. Fix Swift 6 Sendable error
+                          txt = txt.replace('case parsingError(Any)', 'case parsingError(any Sendable)')
+
+                          # 2. Fix iOS SDK compatibility (strip missing .glassEffect)
+                          txt = re.sub(r'\.glassEffect\(.*', '', txt)
+
+                          # 3. Remove donation / sponsor / buymeacoffee URLs
+                          txt = re.sub(r'https?://[^\s\"\'\)]*buymeacoffee\.com[^\s\"\'\)]*', '', txt)
+                          txt = re.sub(r'https?://[^\s\"\'\)]*github\.com/sponsors[^\s\"\'\)]*', '', txt)
+                          txt = re.sub(r'buymeacoffee\.com/[a-zA-Z0-9_]+', '', txt)
+                          txt = txt.replace('Sponsor @Nyasami', 'AltroBox Official')
+                          txt = txt.replace('\"Ksign\"', '\"AltroBox\"')
+
+                          # 4. Inject small 'AltroBox' badge in every screen via NBNavigationView.swift
+                          if f == 'NBNavigationView.swift' and '.navigationTitle(' in txt:
+                              badge_code = '.navigationTitle(\\1)\\n\\t\\t\\t.safeAreaInset(edge: .top, spacing: 0) { HStack { Text(\"AltroBox\").font(.system(size: 11, weight: .semibold, design: .rounded)).foregroundStyle(.secondary.opacity(0.75)).padding(.leading, 18).padding(.top, 2); Spacer() }.allowsHitTesting(false) }'
+                              txt = re.sub(r'\.navigationTitle\(([^)]+)\)', badge_code, txt, count=1)
+
+                          if orig != txt:
+                              with open(path, 'w', encoding='utf-8') as fp:
+                                  fp.write(txt)
+                              print(f'Patched: {path}')
+                      except Exception as e:
+                          pass
           "
           find . -name "Package.swift" -exec sed -i '' 's/swift-tools-version: 6.0/swift-tools-version: 5.9/g' {} +
 
       - name: Apply Custom App Name, Version & Bundle ID
         env:
-          CUSTOM_NAME: ${{ inputs.app_name || 'ESign' }}
-          CUSTOM_BUNDLE_ID: ${{ inputs.bundle_id || 'p3.xyz.yyyue.esign' }}
-          CUSTOM_VERSION: ${{ inputs.app_version || '5.0.2' }}
+          CUSTOM_NAME: ${{ inputs.app_name || 'AltroBOX' }}
+          CUSTOM_BUNDLE_ID: ${{ inputs.bundle_id || 'com.altrobox.app' }}
+          CUSTOM_VERSION: ${{ inputs.app_version || '1.0.0' }}
         run: |
           cd upstream_ksign
           echo "Applying Display Name: $CUSTOM_NAME, Bundle ID: $CUSTOM_BUNDLE_ID, Version: $CUSTOM_VERSION"
@@ -106,11 +134,11 @@ jobs:
           rm -f deps/server.key1 deps/server.key2
           echo "*.backloop.dev" > deps/commonName.txt
 
-      - name: Build & Package Unsigned IPA
+      - name: Build & Package AltroBOX IPA
         env:
-          CUSTOM_NAME: ${{ inputs.app_name || 'ESign' }}
-          CUSTOM_BUNDLE_ID: ${{ inputs.bundle_id || 'p3.xyz.yyyue.esign' }}
-          CUSTOM_VERSION: ${{ inputs.app_version || '5.0.2' }}
+          CUSTOM_NAME: ${{ inputs.app_name || 'AltroBOX' }}
+          CUSTOM_BUNDLE_ID: ${{ inputs.bundle_id || 'com.altrobox.app' }}
+          CUSTOM_VERSION: ${{ inputs.app_version || '1.0.0' }}
         run: |
           cd upstream_ksign
           TMP_BUILD="$(mktemp -d)"
@@ -130,33 +158,34 @@ jobs:
 
           APP_PATH="$TMP_BUILD/Build/Products/Release-iphoneos/Ksign.app"
           mkdir -p "$STAGE_DIR/Payload"
-          cp -R "$APP_PATH" "$STAGE_DIR/Payload/Ksign.app"
+          cp -R "$APP_PATH" "$STAGE_DIR/Payload/AltroBOX.app"
 
           # Patch Info.plist with custom Display Name, Bundle ID, and Version
-          PLIST="$STAGE_DIR/Payload/Ksign.app/Info.plist"
+          PLIST="$STAGE_DIR/Payload/AltroBOX.app/Info.plist"
           if [ -f "$PLIST" ]; then
             /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $CUSTOM_NAME" "$PLIST" || \
             /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string $CUSTOM_NAME" "$PLIST" || true
+            /usr/libexec/PlistBuddy -c "Set :CFBundleName $CUSTOM_NAME" "$PLIST" || true
             /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $CUSTOM_BUNDLE_ID" "$PLIST" || true
             /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $CUSTOM_VERSION" "$PLIST" || true
           fi
 
-          chmod -R 0755 "$STAGE_DIR/Payload/Ksign.app"
-          codesign --force --sign - --timestamp=none "$STAGE_DIR/Payload/Ksign.app"
-          cp deps/* "$STAGE_DIR/Payload/Ksign.app/" || true
-          rm -rf "$STAGE_DIR/Payload/Ksign.app/_CodeSignature"
+          chmod -R 0755 "$STAGE_DIR/Payload/AltroBOX.app"
+          codesign --force --sign - --timestamp=none "$STAGE_DIR/Payload/AltroBOX.app"
+          cp deps/* "$STAGE_DIR/Payload/AltroBOX.app/" || true
+          rm -rf "$STAGE_DIR/Payload/AltroBOX.app/_CodeSignature"
 
           mkdir -p "$GITHUB_WORKSPACE/output"
           cd "$STAGE_DIR"
-          zip -r9 "$GITHUB_WORKSPACE/output/ESign-unsigned.ipa" Payload
+          zip -r9 "$GITHUB_WORKSPACE/output/AltroBOX-unsigned.ipa" Payload
 
       - name: Optional Cloud Signing with Certificate Secrets (Zsign)
         env:
           P12_BASE64: ${{ secrets.P12_BASE64 }}
           P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
           PROVISION_BASE64: ${{ secrets.PROVISION_BASE64 }}
-          CUSTOM_NAME: ${{ inputs.app_name || 'ESign' }}
-          CUSTOM_BUNDLE_ID: ${{ inputs.bundle_id || 'p3.xyz.yyyue.esign' }}
+          CUSTOM_NAME: ${{ inputs.app_name || 'AltroBOX' }}
+          CUSTOM_BUNDLE_ID: ${{ inputs.bundle_id || 'com.altrobox.app' }}
         run: |
           if [ -z "$P12_BASE64" ] || [ -z "$PROVISION_BASE64" ]; then
             echo "Secrets P12_BASE64 or PROVISION_BASE64 are not configured. Skipping cloud signing."
@@ -180,16 +209,16 @@ jobs:
             -m /tmp/cert.mobileprovision \
             -n "$CUSTOM_NAME" \
             -b "$CUSTOM_BUNDLE_ID" \
-            -o "$GITHUB_WORKSPACE/output/ESign-signed.ipa" \
+            -o "$GITHUB_WORKSPACE/output/AltroBOX-signed.ipa" \
             -z 9 \
-            "$GITHUB_WORKSPACE/output/ESign-unsigned.ipa"
+            "$GITHUB_WORKSPACE/output/AltroBOX-unsigned.ipa"
 
           rm -f /tmp/cert.p12 /tmp/cert.mobileprovision
 
       - name: Upload Built IPA Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ESign-IPA-Build
+          name: AltroBOX-IPA-Build
           path: output/*.ipa
           if-no-files-found: error
 
@@ -197,7 +226,7 @@ jobs:
         if: ${{ inputs.create_release == true }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ inputs.app_version || '5.0.2' }}-build.${{ github.run_number }}
-          name: "${{ inputs.app_name || 'ESign' }} v${{ inputs.app_version || '5.0.2' }} (Build #${{ github.run_number }})"
+          tag_name: v${{ inputs.app_version || '1.0.0' }}-build.${{ github.run_number }}
+          name: "${{ inputs.app_name || 'AltroBOX' }} v${{ inputs.app_version || '1.0.0' }} (Build #${{ github.run_number }})"
           files: output/*.ipa
           generate_release_notes: true
