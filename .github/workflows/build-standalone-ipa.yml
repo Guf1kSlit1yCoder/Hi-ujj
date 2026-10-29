@@ -1,0 +1,79 @@
+name: Cloud Build Standalone XcodeGen IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: "Имя приложения (CFBundleDisplayName)"
+        required: false
+        default: "ESign"
+        type: string
+      bundle_id:
+        description: "Bundle ID"
+        required: false
+        default: "p3.xyz.yyyue.esign"
+        type: string
+
+jobs:
+  build-standalone:
+    name: Generate Xcode Project & Build Unsigned IPA
+    runs-on: macos-15
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: |
+          brew install xcodegen
+
+      - name: Patch project.yml with Custom Inputs
+        env:
+          CUSTOM_NAME: ${{ inputs.app_name || 'ESign' }}
+          CUSTOM_BUNDLE_ID: ${{ inputs.bundle_id || 'p3.xyz.yyyue.esign' }}
+        run: |
+          sed -i '' "s/CFBundleDisplayName: "ESign"/CFBundleDisplayName: "${CUSTOM_NAME}"/g" project.yml
+          sed -i '' "s/bundleId: p3.xyz.yyyue.esign/bundleId: ${CUSTOM_BUNDLE_ID}/g" project.yml
+
+      - name: Generate Xcode Project via XcodeGen
+        run: |
+          xcodegen generate
+
+      - name: Download Local OTA Certificates (backloop.dev)
+        run: |
+          mkdir -p deps
+          curl -L -o deps/server.crt https://backloop.dev/backloop.dev-cert.crt || true
+          curl -L -o deps/server.key1 https://backloop.dev/backloop.dev-key.part1.pem || true
+          curl -L -o deps/server.key2 https://backloop.dev/backloop.dev-key.part2.pem || true
+          cat deps/server.key1 deps/server.key2 > deps/server.pem 2>/dev/null || true
+          rm -f deps/server.key1 deps/server.key2
+          echo "*.backloop.dev" > deps/commonName.txt
+
+      - name: Build Release App & Package IPA
+        run: |
+          TMP_DIR="$(mktemp -d)"
+          xcodebuild \
+            -project ESign.xcodeproj \
+            -scheme ESign \
+            -configuration Release \
+            -arch arm64 \
+            -sdk iphoneos \
+            -derivedDataPath "$TMP_DIR" \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES=NO
+
+          mkdir -p Payload output
+          cp -R "$TMP_DIR/Build/Products/Release-iphoneos/ESign.app" Payload/ESign.app
+          chmod -R 0755 Payload/ESign.app
+          codesign --force --sign - --timestamp=none Payload/ESign.app
+          cp deps/* Payload/ESign.app/ || true
+          rm -rf Payload/ESign.app/_CodeSignature
+          zip -r9 output/ESign-Standalone-unsigned.ipa Payload
+
+      - name: Upload Standalone IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ESign-Standalone-IPA
+          path: output/ESign-Standalone-unsigned.ipa
